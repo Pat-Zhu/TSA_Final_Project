@@ -2,16 +2,12 @@
 title: "Forecasting Stock Market Volatility Using Daily S&P 500 ETF Returns"
 author: "He Jiang, Patrick Zhu"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, message=FALSE, warning=FALSE}
-packages <- c("quantmod", "zoo", "xts", "readr", "dplyr", "ggplot2", "forecast")
-installed <- packages %in% rownames(installed.packages())
-if (any(!installed)) {
-  install.packages(packages[!installed])
-}
-
 library(quantmod)
 library(zoo)
 library(xts)
@@ -109,4 +105,89 @@ Pacf(vol_ts, main = "PACF of 21-Day Rolling Volatility")
 # Next Steps
 
 The next stage of the project will split the data into training and test sets and compare forecasting performance across multiple models, such as ARIMA and GARCH.
+
+# Train/Test Split
+
+We split the volatility series into a training set and a test set. The training set is used to fit the models, and the test set is used to evaluate out-of-sample forecasting performance.
+
+```{r train-test-split}
+n <- nrow(data)
+train_size <- floor(0.8 * n)
+
+train_data <- data[1:train_size, ]
+test_data  <- data[(train_size + 1):n, ]
+
+train_vol <- train_data$volatility_21
+test_vol  <- test_data$volatility_21
+
+length(train_vol)
+length(test_vol)
+
+tail(train_data)
+head(test_data)
+```
+
+# Baseline Forecast
+
+As a simple benchmark, we first use a naive forecasting approach. This baseline helps us evaluate whether more advanced models such as ARIMA and GARCH actually improve forecasting accuracy.
+
+```{r}
+train_ts <- ts(train_vol, start = 1, frequency = 1)
+test_ts  <- ts(test_vol,  start = length(train_ts) + 1, frequency = 1)
+
+baseline_fit <- naive(train_ts, h = length(test_ts))
+
+autoplot(baseline_fit) +
+  autolayer(test_ts, series = "Actual") +
+  labs(
+    title = "Baseline Naive Forecast vs Actual Volatility",
+    x = "Time",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+
+
+
+```{r baseline-accuracy}
+accuracy(baseline_fit, test_ts)
+```
+
+
+```{r}
+arima_fit <- auto.arima(train_ts, seasonal = FALSE)
+summary(arima_fit)
+```
+
+```{r arima-forecast}
+arima_fc <- forecast(arima_fit, h = length(test_ts))
+
+autoplot(arima_fc) +
+  autolayer(test_ts, series = "Actual") +
+  labs(
+    title = "ARIMA Forecast vs Actual Volatility",
+    x = "Time",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+```{r arima-accuracy}
+accuracy(arima_fc, test_ts)
+```
+```{r compare-baseline-arima}
+baseline_acc <- accuracy(baseline_fit, test_ts)
+arima_acc    <- accuracy(arima_fc, test_ts)
+
+comparison <- data.frame(
+  Model = c("Naive Baseline", "ARIMA"),
+  RMSE  = c(baseline_acc[2, "RMSE"], arima_acc[2, "RMSE"]),
+  MAE   = c(baseline_acc[2, "MAE"],  arima_acc[2, "MAE"]),
+  MAPE  = c(baseline_acc[2, "MAPE"], arima_acc[2, "MAPE"])
+)
+
+comparison
+```
+
+
 
