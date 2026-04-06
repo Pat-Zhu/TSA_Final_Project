@@ -15,6 +15,7 @@ library(readr)
 library(dplyr)
 library(ggplot2)
 library(forecast)
+library(tseries)
 ```
 
 # Introduction
@@ -189,5 +190,99 @@ comparison <- data.frame(
 comparison
 ```
 
+## GARCH Model
+
+```{r garch-model, message=FALSE, warning=FALSE}
+library(tseries)
+
+# Use return series for GARCH
+train_ret <- train_data$return
+test_ret  <- test_data$return
+
+# Fit GARCH(1,1)
+garch_fit <- garch(train_ret, order = c(1, 1))
+
+# Show model summary
+summary(garch_fit)
+
+# Extract fitted conditional volatility from training period
+train_garch_vol <- fitted(garch_fit)[, 1]
+
+# Use the last fitted conditional volatility as a simple forecast benchmark
+last_garch_vol <- tail(train_garch_vol, 1)
+garch_forecast <- rep(last_garch_vol, length(test_vol))
+
+# Convert forecast to time series for plotting
+garch_fc_ts <- ts(garch_forecast, start = length(train_ts) + 1, frequency = 1)
+
+# Plot GARCH forecast against actual test volatility
+autoplot(garch_fc_ts, series = "GARCH Forecast") +
+  autolayer(test_ts, series = "Actual") +
+  labs(
+    title = "GARCH-Based Forecast vs Actual Volatility",
+    x = "Time",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+
+# Accuracy
+garch_acc <- accuracy(garch_fc_ts, test_ts)
+garch_acc
+```
+
+```{r compare-models}
+baseline_acc <- accuracy(baseline_fit, test_ts)
+arima_acc    <- accuracy(arima_fc, test_ts)
+garch_acc    <- accuracy(garch_fc_ts, test_ts)
+
+comparison <- data.frame(
+  Model = c("Naive Baseline", "ARIMA", "GARCH-based"),
+  RMSE  = c(baseline_acc[2, "RMSE"], arima_acc[2, "RMSE"], garch_acc[1, "RMSE"]),
+  MAE   = c(baseline_acc[2, "MAE"],  arima_acc[2, "MAE"],  garch_acc[1, "MAE"]),
+  MAPE  = c(baseline_acc[2, "MAPE"], arima_acc[2, "MAPE"], garch_acc[1, "MAPE"])
+)
+
+comparison
+```
+## ARIMA Residual Diagnostics
+
+```{r arima-residuals}
+checkresiduals(arima_fit)
+```
+
+## ETS Model
+
+```{r ets-model}
+ets_fit <- ets(train_ts)
+ets_fc  <- forecast(ets_fit, h = length(test_ts))
+
+autoplot(ets_fc) +
+  autolayer(test_ts, series = "Actual") +
+  labs(
+    title = "ETS Forecast vs Actual Volatility",
+    x = "Time",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+
+ets_acc <- accuracy(ets_fc, test_ts)
+ets_acc
+```
 
 
+```{r nnar-model}
+nn_fit <- nnetar(train_ts)
+nn_fc  <- forecast(nn_fit, h = length(test_ts))
+
+autoplot(nn_fc) +
+  autolayer(test_ts, series = "Actual") +
+  labs(
+    title = "NNAR Forecast vs Actual Volatility",
+    x = "Time",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+
+nn_acc <- accuracy(nn_fc, test_ts)
+nn_acc
+```
