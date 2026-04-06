@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.27)  5 APR 2026 23:41
+This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.27)  6 APR 2026 00:42
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -519,60 +519,86 @@ File: final_report_files/figure-latex/arima-forecast-1.pdf Graphic file (type pd
 Package pdftex.def Info: final_report_files/figure-latex/arima-forecast-1.pdf  used on input line 433.
 (pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
 [10 <./final_report_files/figure-latex/arima-forecast-1.pdf>] [11]
-Underfull \vbox (badness 6944) detected at line 596
+Underfull \vbox (badness 6944) detected at line 595
  []
 
 [12]
 <final_report_files/figure-latex/garch-model-1.pdf, id=119, 469.755pt x 325.215pt>
 File: final_report_files/figure-latex/garch-model-1.pdf Graphic file (type pdf)
 <use final_report_files/figure-latex/garch-model-1.pdf>
-Package pdftex.def Info: final_report_files/figure-latex/garch-model-1.pdf  used on input line 598.
+Package pdftex.def Info: final_report_files/figure-latex/garch-model-1.pdf  used on input line 597.
 (pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
-
-Underfull \vbox (badness 1325) detected at line 630
- []
-
 [13 <./final_report_files/figure-latex/garch-model-1.pdf>]
 <final_report_files/figure-latex/arima-residuals-1.pdf, id=130, 469.755pt x 325.215pt>
 File: final_report_files/figure-latex/arima-residuals-1.pdf Graphic file (type pdf)
 <use final_report_files/figure-latex/arima-residuals-1.pdf>
-Package pdftex.def Info: final_report_files/figure-latex/arima-residuals-1.pdf  used on input line 648.
+Package pdftex.def Info: final_report_files/figure-latex/arima-residuals-1.pdf  used on input line 647.
 (pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
 [14 <./final_report_files/figure-latex/arima-residuals-1.pdf>]
-<final_report_files/figure-latex/ets-model-1.pdf, id=141, 469.755pt x 325.215pt>
+<final_report_files/figure-latex/ets-model-1.pdf, id=142, 469.755pt x 325.215pt>
 File: final_report_files/figure-latex/ets-model-1.pdf Graphic file (type pdf)
 <use final_report_files/figure-latex/ets-model-1.pdf>
-Package pdftex.def Info: final_report_files/figure-latex/ets-model-1.pdf  used on input line 678.
+Package pdftex.def Info: final_report_files/figure-latex/ets-model-1.pdf  used on input line 677.
 (pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
-
-Underfull \vbox (badness 1917) detected at line 710
- []
-
 [15 <./final_report_files/figure-latex/ets-model-1.pdf>]
 <final_report_files/figure-latex/nnar-model-1.pdf, id=153, 469.755pt x 325.215pt>
 File: final_report_files/figure-latex/nnar-model-1.pdf Graphic file (type pdf)
 <use final_report_files/figure-latex/nnar-model-1.pdf>
-Package pdftex.def Info: final_report_files/figure-latex/nnar-model-1.pdf  used on input line 712.
+Package pdftex.def Info: final_report_files/figure-latex/nnar-model-1.pdf  used on input line 711.
 (pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
-[16 <./final_report_files/figure-latex/nnar-model-1.pdf>] (./final_report.aux)
+[16 <./final_report_files/figure-latex/nnar-model-1.pdf>]
+<final_report_files/figure-latex/results-table-1.pdf, id=163, 469.755pt x 325.215pt>
+File: final_report_files/figure-latex/results-table-1.pdf Graphic file (type pdf)
+<use final_report_files/figure-latex/results-table-1.pdf>
+Package pdftex.def Info: final_report_files/figure-latex/results-table-1.pdf  used on input line 775.
+(pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
+[17]
+<final_report_files/figure-latex/unnamed-chunk-3-1.pdf, id=168, 469.755pt x 325.215pt>
+File: final_report_files/figure-latex/unnamed-chunk-3-1.pdf Graphic file (type pdf)
+<use final_report_files/figure-latex/unnamed-chunk-3-1.pdf>
+Package pdftex.def Info: final_report_files/figure-latex/unnamed-chunk-3-1.pdf  used on input line 792.
+(pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
+[18 <./final_report_files/figure-latex/results-table-1.pdf>]
+<final_report_files/figure-latex/unnamed-chunk-4-1.pdf, id=178, 469.755pt x 325.215pt>
+File: final_report_files/figure-latex/unnamed-chunk-4-1.pdf Graphic file (type pdf)
+<use final_report_files/figure-latex/unnamed-chunk-4-1.pdf>
+Package pdftex.def Info: final_report_files/figure-latex/unnamed-chunk-4-1.pdf  used on input line 808.
+(pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
+[19 <./final_report_files/figure-latex/unnamed-chunk-3-1.pdf>]
+<final_report_files/figure-latex/unnamed-chunk-5-1.pdf, id=189, 469.755pt x 325.215pt>
+File: final_report_files/figure-latex/unnamed-chunk-5-1.pdf Graphic file (type pdf)
+<use final_report_files/figure-latex/unnamed-chunk-5-1.pdf>
+Package pdftex.def Info: final_report_files/figure-latex/unnamed-chunk-5-1.pdf  used on input line 840.
+(pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
+[20 <./final_report_files/figure-latex/unnamed-chunk-4-1.pdf>]
+Underfull \vbox (badness 10000) detected at line 883
+ []
+
+[21 <./final_report_files/figure-latex/unnamed-chunk-5-1.pdf>]
+<final_report_files/figure-latex/unnamed-chunk-6-1.pdf, id=210, 469.755pt x 325.215pt>
+File: final_report_files/figure-latex/unnamed-chunk-6-1.pdf Graphic file (type pdf)
+<use final_report_files/figure-latex/unnamed-chunk-6-1.pdf>
+Package pdftex.def Info: final_report_files/figure-latex/unnamed-chunk-6-1.pdf  used on input line 885.
+(pdftex.def)             Requested size: 469.75386pt x 325.2142pt.
+[22 <./final_report_files/figure-latex/unnamed-chunk-6-1.pdf>] (./final_report.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 13662 strings out of 469453
- 218341 string characters out of 5466932
+ 13703 strings out of 469453
+ 220584 string characters out of 5466932
  673732 words of memory out of 5000000
- 42073 multiletter control sequences out of 15000+600000
+ 42108 multiletter control sequences out of 15000+600000
  661863 words of font info for 88 fonts, out of 8000000 for 9000
  36 hyphenation exceptions out of 8191
  83i,6n,93p,1009b,736s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr10.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr12.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr17.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmtk10.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></Users/hejiang/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmtti10.pfb>
-Output written on final_report.pdf (16 pages, 562555 bytes).
+Output written on final_report.pdf (22 pages, 601844 bytes).
 PDF statistics:
- 252 PDF objects out of 1000 (max. 8388607)
- 195 compressed objects within 2 object streams
- 32 named destinations out of 1000 (max. 500000)
- 18608 words of extra memory for PDF output out of 20736 (max. 10000000)
+ 313 PDF objects out of 1000 (max. 8388607)
+ 237 compressed objects within 3 object streams
+ 38 named destinations out of 1000 (max. 500000)
+ 18633 words of extra memory for PDF output out of 20736 (max. 10000000)
 

@@ -286,3 +286,152 @@ autoplot(nn_fc) +
 nn_acc <- accuracy(nn_fc, test_ts)
 nn_acc
 ```
+
+
+```{r results-table}
+
+results_all <- data.frame(
+  Model = c("Naive", "ARIMA", "GARCH", "ETS", "NNAR"),
+  RMSE  = c(
+    baseline_acc[2, "RMSE"],
+    arima_acc[2, "RMSE"],
+    garch_acc[1, "RMSE"],
+    ets_acc[2, "RMSE"],
+    nn_acc[2, "RMSE"]
+  ),
+  MAE   = c(
+    baseline_acc[2, "MAE"],
+    arima_acc[2, "MAE"],
+    garch_acc[1, "MAE"],
+    ets_acc[2, "MAE"],
+    nn_acc[2, "MAE"]
+  ),
+  MAPE  = c(
+    baseline_acc[2, "MAPE"],
+    arima_acc[2, "MAPE"],
+    garch_acc[1, "MAPE"],
+    ets_acc[2, "MAPE"],
+    nn_acc[2, "MAPE"]
+  )
+)
+
+results_long <- data.frame(
+  Model = rep(results_all$Model, 3),
+  Metric = rep(c("RMSE", "MAE", "MAPE"), each = nrow(results_all)),
+  Value = c(results_all$RMSE, results_all$MAE, results_all$MAPE)
+)
+
+ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Forecast Accuracy Comparison Across Models",
+    x = "Model",
+    y = "Error Value"
+  ) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+```
+```{r}
+ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Forecast Accuracy Comparison Across Models",
+    x = "Model",
+    y = "Error Value"
+  ) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+```{r}
+
+ggplot(results_long, aes(x = Metric, y = Model, fill = Value)) +
+  geom_tile() +
+  geom_text(aes(label = round(Value, 4)), size = 4) +
+  labs(
+    title = "Heatmap of Forecast Errors",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+
+
+results_rank <- data.frame(
+  Model = results_all$Model,
+  RMSE_rank = rank(results_all$RMSE),
+  MAE_rank  = rank(results_all$MAE),
+  MAPE_rank = rank(results_all$MAPE)
+)
+
+
+ranking_long <- data.frame(
+  Model = rep(results_rank$Model, 3),
+  Metric = rep(c("RMSE", "MAE", "MAPE"), each = nrow(results_rank)),
+  Rank = c(results_rank$RMSE_rank,
+           results_rank$MAE_rank,
+           results_rank$MAPE_rank)
+)
+
+ggplot(ranking_long, aes(x = Metric, y = Model, fill = Rank)) +
+  geom_tile() +
+  geom_text(aes(label = Rank), size = 5) +
+  labs(
+    title = "Model Ranking by Forecast Metric (1 = Best)",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+
+forecast_df <- data.frame(
+  Time   = 1:length(test_ts),
+  Actual = as.numeric(test_ts),
+  Naive  = as.numeric(baseline_fit$mean),
+  ARIMA  = as.numeric(arima_fc$mean),
+  GARCH  = as.numeric(garch_fc_ts),
+  ETS    = as.numeric(ets_fc$mean),
+  NNAR   = as.numeric(nn_fc$mean)
+)
+
+forecast_long <- data.frame(
+  Time = rep(forecast_df$Time, 6),
+  Series = c(
+    rep("Actual", nrow(forecast_df)),
+    rep("Naive",  nrow(forecast_df)),
+    rep("ARIMA",  nrow(forecast_df)),
+    rep("GARCH",  nrow(forecast_df)),
+    rep("ETS",    nrow(forecast_df)),
+    rep("NNAR",   nrow(forecast_df))
+  ),
+  Value = c(
+    forecast_df$Actual,
+    forecast_df$Naive,
+    forecast_df$ARIMA,
+    forecast_df$GARCH,
+    forecast_df$ETS,
+    forecast_df$NNAR
+  )
+)
+
+ggplot(forecast_long, aes(x = Time, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "Actual vs Forecasted Volatility on the Test Set",
+    x = "Time Index",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
