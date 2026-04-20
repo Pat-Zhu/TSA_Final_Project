@@ -1,0 +1,902 @@
+---
+title: "Forecasting Stock Market Volatility Using Daily S&P 500 ETF Returns"
+author: "He Jiang and Patrick Zhu"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+fontsize: 11pt
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+    fig_caption: true
+geometry: margin=2.54cm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 7.2,
+  fig.height = 4.8
+)
+
+library(quantmod)
+library(zoo)
+library(xts)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(knitr)
+
+set.seed(797)
+```
+
+```{r data-prep, include=FALSE}
+# ------------------------------------------------------------
+# Data download and preprocessing
+# ------------------------------------------------------------
+getSymbols("SPY", src = "yahoo", from = "2015-01-01", to = "2026-03-31", auto.assign = TRUE)
+
+spy_adj <- Ad(SPY)
+spy_ret <- diff(log(spy_adj))
+
+spy_vol_21 <- rollapply(
+  spy_ret,
+  width = 21,
+  FUN = sd,
+  align = "right",
+  fill = NA
+)
+
+data <- data.frame(
+  date = as.Date(index(spy_vol_21)),
+  adj_close = as.numeric(spy_adj[index(spy_vol_21)]),
+  return = as.numeric(spy_ret[index(spy_vol_21)]),
+  volatility_21 = as.numeric(spy_vol_21)
+)
+
+data <- na.omit(data)
+
+n <- nrow(data)
+train_size <- floor(0.8 * n)
+
+train_data <- data[1:train_size, ]
+test_data  <- data[(train_size + 1):n, ]
+
+train_vol <- train_data$volatility_21
+test_vol  <- test_data$volatility_21
+train_ret <- train_data$return
+test_ret  <- test_data$return
+
+train_ts <- ts(train_vol, frequency = 1)
+test_ts  <- ts(test_vol, frequency = 1)
+
+summary_table <- data.frame(
+  Variable = c("date", "adj_close", "return", "volatility_21"),
+  Description = c(
+    "Trading date",
+    "Adjusted closing price of SPY",
+    "Daily log return",
+    "21-day rolling standard deviation of returns"
+  ),
+  Unit = c("Date", "USD", "Log return", "Standard deviation"),
+  Mean = c(NA, mean(data$adj_close), mean(data$return), mean(data$volatility_21)),
+  SD   = c(NA, sd(data$adj_close), sd(data$return), sd(data$volatility_21)),
+  Min  = c(NA, min(data$adj_close), min(data$return), min(data$volatility_21)),
+  Max  = c(NA, max(data$adj_close), max(data$return), max(data$volatility_21))
+)
+
+first_ten_rows <- head(data, 10)
+
+# ------------------------------------------------------------
+# Preliminary tests
+# ------------------------------------------------------------
+adf_result <- adf.test(train_vol)
+ljung_result <- Box.test(train_vol, lag = 20, type = "Ljung-Box")
+
+prelim_tests <- data.frame(
+  Test = c("ADF test on training volatility", "Ljung-Box test on training volatility (lag = 20)"),
+  Statistic = c(unname(adf_result$statistic), unname(ljung_result$statistic)),
+  P_Value = c(adf_result$p.value, ljung_result$p.value)
+)
+
+# ------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------
+calc_metrics <- function(actual, pred) {
+  actual <- as.numeric(actual)
+  pred   <- as.numeric(pred)
+
+  rmse <- sqrt(mean((actual - pred)^2, na.rm = TRUE))
+  mae  <- mean(abs(actual - pred), na.rm = TRUE)
+  mape <- mean(abs((actual - pred) / actual), na.rm = TRUE) * 100
+
+  c(RMSE = rmse, MAE = mae, MAPE = mape)
+}
+
+rolling_one_step <- function(train_vec, test_vec, fit_fun) {
+  history <- as.numeric(train_vec)
+  preds <- numeric(length(test_vec))
+
+  for (i in seq_along(test_vec)) {
+    fallback_value <- tail(history, 1)
+
+    fit_i <- tryCatch(
+      fit_fun(ts(history, frequency = 1)),
+      error = function(e) NULL
+    )
+
+    if (is.null(fit_i)) {
+      pred_i <- fallback_value
+    } else {
+      pred_i <- tryCatch(
+        as.numeric(forecast(fit_i, h = 1)$mean[1]),
+        error = function(e) NA_real_
+      )
+      if (is.na(pred_i)) pred_i <- fallback_value
+    }
+
+    preds[i] <- pred_i
+    history <- c(history, as.numeric(test_vec[i]))
+  }
+
+  preds
+}
+
+rolling_naive <- function(train_vec, test_vec) {
+  c(tail(as.numeric(train_vec), 1), head(as.numeric(test_vec), -1))
+}
+
+rolling_nn_safe <- function(train_vec, test_vec, p_val = NULL, size_val = NULL) {
+  history <- as.numeric(train_vec)
+  preds <- numeric(length(test_vec))
+
+  for (i in seq_along(test_vec)) {
+    fallback_value <- tail(history, 1)
+
+    fit_i <- tryCatch(
+      {
+        if (is.null(p_val) || is.null(size_val)) {
+          nnetar(ts(history, frequency = 1), repeats = 1)
+        } else {
+          nnetar(ts(history, frequency = 1), p = p_val, size = size_val, repeats = 1)
+        }
+      },
+      error = function(e) NULL
+    )
+
+    if (is.null(fit_i)) {
+      pred_i <- fallback_value
+    } else {
+      pred_i <- tryCatch(
+        as.numeric(forecast(fit_i, h = 1)$mean[1]),
+        error = function(e) NA_real_
+      )
+      if (is.na(pred_i)) pred_i <- fallback_value
+    }
+
+    preds[i] <- pred_i
+    history <- c(history, as.numeric(test_vec[i]))
+  }
+
+  preds
+}
+
+direct_garch_forecast <- function(train_returns, h) {
+  fit <- garch(train_returns, order = c(1, 1), trace = FALSE)
+  cf <- coef(fit)
+
+  omega <- as.numeric(cf["a0"])
+  alpha <- as.numeric(cf["a1"])
+  beta  <- as.numeric(cf["b1"])
+
+  train_sigma <- fitted(fit)[, 1]
+  sigma2_prev <- tail(train_sigma, 1)^2
+  eps2_prev <- tail(as.numeric(train_returns), 1)^2
+
+  preds <- numeric(h)
+  preds[1] <- omega + alpha * eps2_prev + beta * sigma2_prev
+
+  if (h > 1) {
+    for (i in 2:h) {
+      preds[i] <- omega + (alpha + beta) * preds[i - 1]
+    }
+  }
+
+  list(pred = sqrt(preds), fit = fit, omega = omega, alpha = alpha, beta = beta)
+}
+
+rolling_garch_forecast <- function(train_returns, test_returns) {
+  fit <- garch(train_returns, order = c(1, 1), trace = FALSE)
+  cf <- coef(fit)
+
+  omega <- as.numeric(cf["a0"])
+  alpha <- as.numeric(cf["a1"])
+  beta  <- as.numeric(cf["b1"])
+
+  train_sigma <- fitted(fit)[, 1]
+  sigma2_prev <- tail(train_sigma, 1)^2
+  ret_prev <- tail(as.numeric(train_returns), 1)
+
+  preds <- numeric(length(test_returns))
+
+  for (i in seq_along(test_returns)) {
+    sigma2_now <- omega + alpha * ret_prev^2 + beta * sigma2_prev
+    preds[i] <- sqrt(sigma2_now)
+    sigma2_prev <- sigma2_now
+    ret_prev <- as.numeric(test_returns[i])
+  }
+
+  list(pred = preds, fit = fit, omega = omega, alpha = alpha, beta = beta)
+}
+
+# ------------------------------------------------------------
+# Initial fitted models
+# ------------------------------------------------------------
+naive_direct_fit <- naive(train_ts, h = length(test_ts))
+naive_direct_pred <- as.numeric(naive_direct_fit$mean)
+
+arima_fit <- auto.arima(
+  train_ts,
+  seasonal = FALSE,
+  stepwise = TRUE,
+  approximation = TRUE
+)
+arima_direct_fit <- forecast(arima_fit, h = length(test_ts))
+arima_direct_pred <- as.numeric(arima_direct_fit$mean)
+
+ets_fit <- ets(train_ts)
+ets_direct_fit <- forecast(ets_fit, h = length(test_ts))
+ets_direct_pred <- as.numeric(ets_direct_fit$mean)
+
+nn_fit <- nnetar(train_ts, repeats = 3)
+nn_direct_fit <- forecast(nn_fit, h = length(test_ts))
+nn_direct_pred <- as.numeric(nn_direct_fit$mean)
+
+garch_direct <- direct_garch_forecast(train_ret, h = length(test_ret))
+garch_direct_pred <- as.numeric(garch_direct$pred)
+garch_direct_ts <- ts(garch_direct_pred, frequency = 1)
+
+# ------------------------------------------------------------
+# Dynamic one-step-ahead forecast paths
+# ------------------------------------------------------------
+naive_roll <- rolling_naive(train_vol, test_vol)
+
+arima_order <- arimaorder(arima_fit)
+arima_roll <- rolling_one_step(
+  train_vol,
+  test_vol,
+  function(x) {
+    Arima(
+      x,
+      order = c(arima_order[1], arima_order[2], arima_order[3]),
+      include.mean = (arima_order[2] == 0)
+    )
+  }
+)
+
+ets_roll <- rolling_one_step(
+  train_vol,
+  test_vol,
+  function(x) ets(x)
+)
+
+nn_roll <- rolling_nn_safe(
+  train_vol,
+  test_vol,
+  p_val = nn_fit$p,
+  size_val = nn_fit$size
+)
+
+garch_roll <- rolling_garch_forecast(train_ret, test_ret)
+garch_roll_ts <- ts(garch_roll$pred, frequency = 1)
+
+# ------------------------------------------------------------
+# Accuracy tables
+# ------------------------------------------------------------
+direct_metrics <- rbind(
+  calc_metrics(test_ts, naive_direct_pred),
+  calc_metrics(test_ts, arima_direct_pred),
+  calc_metrics(test_ts, garch_direct_pred),
+  calc_metrics(test_ts, ets_direct_pred),
+  calc_metrics(test_ts, nn_direct_pred)
+)
+
+results_direct <- data.frame(
+  Model = c("Naive", "ARIMA", "GARCH", "ETS", "NNAR"),
+  RMSE = direct_metrics[, "RMSE"],
+  MAE  = direct_metrics[, "MAE"],
+  MAPE = direct_metrics[, "MAPE"]
+)
+
+roll_metrics <- rbind(
+  calc_metrics(test_ts, naive_roll),
+  calc_metrics(test_ts, arima_roll),
+  calc_metrics(test_ts, garch_roll$pred),
+  calc_metrics(test_ts, ets_roll),
+  calc_metrics(test_ts, nn_roll)
+)
+
+results_roll <- data.frame(
+  Model = c("Naive", "ARIMA", "GARCH", "ETS", "NNAR"),
+  RMSE = roll_metrics[, "RMSE"],
+  MAE  = roll_metrics[, "MAE"],
+  MAPE = roll_metrics[, "MAPE"]
+)
+
+direct_rank <- data.frame(
+  Model = results_direct$Model,
+  RMSE_rank = rank(results_direct$RMSE, ties.method = "first"),
+  MAE_rank  = rank(results_direct$MAE, ties.method = "first"),
+  MAPE_rank = rank(results_direct$MAPE, ties.method = "first")
+)
+
+rolling_rank <- data.frame(
+  Model = results_roll$Model,
+  RMSE_rank = rank(results_roll$RMSE, ties.method = "first"),
+  MAE_rank  = rank(results_roll$MAE, ties.method = "first"),
+  MAPE_rank = rank(results_roll$MAPE, ties.method = "first")
+)
+
+direct_rank_long <- rbind(
+  data.frame(Model = direct_rank$Model, Metric = "RMSE", Rank = direct_rank$RMSE_rank),
+  data.frame(Model = direct_rank$Model, Metric = "MAE", Rank = direct_rank$MAE_rank),
+  data.frame(Model = direct_rank$Model, Metric = "MAPE", Rank = direct_rank$MAPE_rank)
+)
+
+rolling_rank_long <- rbind(
+  data.frame(Model = rolling_rank$Model, Metric = "RMSE", Rank = rolling_rank$RMSE_rank),
+  data.frame(Model = rolling_rank$Model, Metric = "MAE", Rank = rolling_rank$MAE_rank),
+  data.frame(Model = rolling_rank$Model, Metric = "MAPE", Rank = rolling_rank$MAPE_rank)
+)
+
+direct_rank_long$Model <- factor(direct_rank_long$Model, levels = rev(results_direct$Model))
+rolling_rank_long$Model <- factor(rolling_rank_long$Model, levels = rev(results_roll$Model))
+
+direct_error_long <- data.frame(
+  Model = rep(results_direct$Model, 3),
+  Metric = rep(c("RMSE", "MAE", "MAPE"), each = nrow(results_direct)),
+  Value = c(results_direct$RMSE, results_direct$MAE, results_direct$MAPE)
+)
+
+direct_error_long$Model <- factor(direct_error_long$Model, levels = rev(results_direct$Model))
+
+rolling_error_long <- data.frame(
+  Model = rep(results_roll$Model, 3),
+  Metric = rep(c("RMSE", "MAE", "MAPE"), each = nrow(results_roll)),
+  Value = c(results_roll$RMSE, results_roll$MAE, results_roll$MAPE)
+)
+
+rolling_error_long$Model <- factor(rolling_error_long$Model, levels = rev(results_roll$Model))
+
+# ------------------------------------------------------------
+# Model-specific plotting data
+# ------------------------------------------------------------
+naive_plot_long <- data.frame(
+  date = rep(test_data$date, 2),
+  Series = c(rep("Actual", nrow(test_data)), rep("Naive Forecast", nrow(test_data))),
+  Value = c(as.numeric(test_ts), naive_roll)
+)
+
+arima_plot_long <- data.frame(
+  date = rep(test_data$date, 2),
+  Series = c(rep("Actual", nrow(test_data)), rep("ARIMA Forecast", nrow(test_data))),
+  Value = c(as.numeric(test_ts), arima_roll)
+)
+
+ets_plot_long <- data.frame(
+  date = rep(test_data$date, 2),
+  Series = c(rep("Actual", nrow(test_data)), rep("ETS Forecast", nrow(test_data))),
+  Value = c(as.numeric(test_ts), ets_roll)
+)
+
+nn_plot_long <- data.frame(
+  date = rep(test_data$date, 2),
+  Series = c(rep("Actual", nrow(test_data)), rep("NNAR Forecast", nrow(test_data))),
+  Value = c(as.numeric(test_ts), nn_roll)
+)
+
+garch_plot_long <- data.frame(
+  date = rep(test_data$date, 2),
+  Series = c(rep("Actual", nrow(test_data)), rep("GARCH Forecast", nrow(test_data))),
+  Value = c(as.numeric(test_ts), garch_roll$pred)
+)
+
+all_models_long <- data.frame(
+  date = rep(test_data$date, 6),
+  Series = c(
+    rep("Actual", nrow(test_data)),
+    rep("Naive", nrow(test_data)),
+    rep("ARIMA", nrow(test_data)),
+    rep("GARCH", nrow(test_data)),
+    rep("ETS", nrow(test_data)),
+    rep("NNAR", nrow(test_data))
+  ),
+  Value = c(
+    as.numeric(test_ts),
+    naive_roll,
+    arima_roll,
+    garch_roll$pred,
+    ets_roll,
+    nn_roll
+  )
+)
+
+top_models_long <- data.frame(
+  date = rep(test_data$date, 4),
+  Series = c(
+    rep("Actual", nrow(test_data)),
+    rep("GARCH", nrow(test_data)),
+    rep("ETS", nrow(test_data)),
+    rep("Naive", nrow(test_data))
+  ),
+  Value = c(
+    as.numeric(test_ts),
+    garch_roll$pred,
+    ets_roll,
+    naive_roll
+  )
+)
+
+# ------------------------------------------------------------
+# ARIMA and GARCH descriptive objects
+# ------------------------------------------------------------
+arima_label <- paste0("ARIMA(", arima_order[1], ",", arima_order[2], ",", arima_order[3], ")")
+ets_method <- ets_fit$method
+
+arima_resid <- residuals(arima_fit)
+
+garch_coef_table <- data.frame(
+  Parameter = c("omega", "alpha", "beta"),
+  Estimate = c(garch_roll$omega, garch_roll$alpha, garch_roll$beta)
+)
+
+best_direct_model <- results_direct$Model[which.min(results_direct$RMSE)]
+best_roll_model <- results_roll$Model[which.min(results_roll$RMSE)]
+```
+
+# 1 Introduction, Motivation, and Objectives
+
+Financial market uncertainty is often expressed through volatility rather than price levels alone. For many practical applications, including risk management, portfolio allocation, derivative pricing, and stress testing, the path of volatility is more informative than the path of prices by itself. Daily equity returns are well known to exhibit volatility clustering, in which large shocks tend to be followed by additional large shocks, while calm periods tend to persist. This feature makes financial volatility a natural target for time series modeling.
+
+In this project, we use the SPDR S&P 500 ETF Trust (SPY) as a liquid proxy for the U.S. equity market and evaluate whether its short-term volatility can be forecasted from historical information. SPY is attractive for this purpose because it is highly traded, spans multiple market regimes, and reflects broad market behavior rather than the idiosyncratic dynamics of a single stock. The project therefore combines a substantively meaningful financial question with a time series structure that is well suited to the models covered in class.
+
+The analysis is organized around three research questions. First, can short-term stock market volatility be forecasted using standard time series models? Second, do more advanced models outperform simple persistence-based baselines? Third, which model provides the best out-of-sample accuracy when evaluated on a held-out test period? The final report addresses these questions using a common volatility proxy, multiple forecasting models, and two complementary evaluation schemes.
+
+**GitHub repository:** [Pat-Zhu/TSA_Final_Project](https://github.com/Pat-Zhu/TSA_Final_Project)
+
+# 2 Dataset Information and Preprocessing
+
+Daily SPY price data were obtained from Yahoo Finance. Adjusted closing prices were used to compute daily log returns, and volatility was then defined as the 21-day rolling standard deviation of returns. This choice was motivated by both interpretation and practicality. A 21-trading-day window is close to one trading month, so the resulting series captures short-run market risk while smoothing some of the day-to-day noise in returns. At the same time, the window is short enough to preserve abrupt changes in market conditions.
+
+After differencing and rolling-window calculation, missing values were removed and the cleaned data were arranged chronologically. The final dataset contains `r nrow(data)` observations spanning `r min(data$date)` to `r max(data$date)`. The series was divided into an 80% training period and a 20% test period. The training set contains `r nrow(train_data)` observations and ends on `r max(train_data$date)`, while the test set contains `r nrow(test_data)` observations and begins on `r min(test_data$date)`. This chronological split preserves the forecasting setting and avoids information leakage.
+
+The cleaned dataset contains four variables used throughout the report: date, adjusted close, daily log return, and the 21-day rolling volatility proxy. The summary table below provides basic descriptive statistics, and the following table shows the first ten rows of the processed series.
+
+```{r summary-table}
+knitr::kable(
+  summary_table,
+  digits = 4,
+  caption = "Summary of variables used in the analysis."
+)
+```
+
+```{r first-ten-table}
+knitr::kable(
+  first_ten_rows,
+  digits = 4,
+  caption = "First 10 rows of the cleaned dataset used in this analysis."
+)
+```
+
+## 2.1 SPY Price Dynamics
+
+The adjusted closing price series shows the long-run growth of the broad U.S. equity market but also reveals pronounced drawdowns during major stress episodes. This plot is useful mainly for contextualizing the return and volatility series analyzed later.
+
+```{r price-plot, fig.cap="Adjusted closing price of SPY over the sample period."}
+ggplot(data, aes(x = date, y = adj_close)) +
+  geom_line() +
+  labs(
+    title = "SPY Adjusted Closing Price",
+    x = "Date",
+    y = "Adjusted Close"
+  ) +
+  theme_minimal()
+```
+
+## 2.2 Daily Log Returns
+
+The daily return series fluctuates around zero, as expected, but the magnitude of the fluctuations varies substantially over time. Large positive and negative returns cluster in particular periods, suggesting time-varying variance rather than constant noise.
+
+```{r returns-plot, fig.cap="Daily log returns of SPY."}
+ggplot(data, aes(x = date, y = return)) +
+  geom_line() +
+  labs(
+    title = "Daily Log Returns of SPY",
+    x = "Date",
+    y = "Log Return"
+  ) +
+  theme_minimal()
+```
+
+## 2.3 Rolling Volatility Proxy
+
+The rolling volatility series below is the main target of the forecasting exercise. It smooths raw returns while preserving the large spikes associated with market stress. The most obvious feature is volatility clustering: elevated volatility does not occur in isolation but rather persists for stretches of time.
+
+```{r volatility-plot, fig.cap="Twenty-one-day rolling volatility of SPY daily log returns."}
+ggplot(data, aes(x = date, y = volatility_21)) +
+  geom_line() +
+  labs(
+    title = "21-Day Rolling Volatility of SPY Returns",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+## 2.4 Distributional Features of the Volatility Proxy
+
+The volatility proxy is strictly nonnegative and right-skewed. Most days are concentrated at relatively low volatility levels, while a smaller number of days account for the large spikes visible in the time series plot. This asymmetry is typical of financial risk measures and helps explain why forecasting large episodes is more difficult than forecasting ordinary days.
+
+```{r volatility-hist, fig.cap="Distribution of the 21-day rolling volatility series."}
+ggplot(data, aes(x = volatility_21)) +
+  geom_histogram(bins = 40) +
+  labs(
+    title = "Distribution of 21-Day Rolling Volatility",
+    x = "Volatility",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+# 3 Time Series Characteristics and Evaluation Design
+
+The plots above suggest that the volatility proxy is persistent, heteroskedastic, and far from white noise. Before fitting forecasting models, it is useful to characterize that dependence more formally and to explain how out-of-sample forecasts will be evaluated.
+
+## 3.1 Training-Test Split
+
+The figure below shows the training and test periods on the same volatility series. The split was chosen so that the models are trained on a long historical window but still evaluated on a substantial, recent holdout period containing meaningful variation.
+
+```{r split-plot, fig.cap="Training and test split for the volatility series."}
+plot_data <- data %>%
+  mutate(Sample = ifelse(date <= max(train_data$date), "Training", "Test"))
+
+ggplot(plot_data, aes(x = date, y = volatility_21, color = Sample)) +
+  geom_line() +
+  labs(
+    title = "Training and Test Periods for SPY Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+## 3.2 Autocorrelation Structure
+
+The autocorrelation function (ACF) and partial autocorrelation function (PACF) provide an initial view of persistence in the volatility series. The ACF displays strong short-lag dependence and decays gradually, while the PACF shows a dominant first lag and smaller early-lag effects. These patterns are consistent with a highly persistent process and suggest that recent volatility contains useful information for forecasting future volatility.
+
+```{r acf-pacf, fig.cap="Autocorrelation (ACF) and partial autocorrelation (PACF) of the volatility series."}
+par(mfrow = c(1, 2))
+Acf(ts(data$volatility_21, frequency = 252), main = "ACF of 21-Day Rolling Volatility")
+Pacf(ts(data$volatility_21, frequency = 252), main = "PACF of 21-Day Rolling Volatility")
+par(mfrow = c(1, 1))
+```
+
+## 3.3 Preliminary Statistical Tests
+
+To supplement the visual diagnostics, an augmented Dickey-Fuller test and a Ljung-Box test were applied to the training volatility series. The ADF test evaluates whether the series contains a unit root, while the Ljung-Box test evaluates whether a group of autocorrelations is jointly zero. Together, these tests help clarify whether time dependence remains substantial enough to motivate forecasting models beyond white-noise assumptions.
+
+```{r prelim-tests-table}
+knitr::kable(
+  prelim_tests,
+  digits = 4,
+  caption = "Preliminary tests applied to the training volatility series."
+)
+```
+
+The ADF test produced a p-value of `r sprintf("%.4f", prelim_tests$P_Value[1])`, while the Ljung-Box test produced a p-value of `r sprintf("%.4f", prelim_tests$P_Value[2])`. Regardless of the exact stationarity interpretation, the dependence structure is clearly strong enough to justify dynamic forecasting models, and the Ljung-Box result confirms that serial dependence is not negligible.
+
+## 3.4 Two Evaluation Schemes
+
+A key lesson from revising the original report is that model evaluation depends not only on the selected model but also on the forecasting design. Two schemes are therefore retained in this final version.
+
+The first is a **single-origin benchmark**. Under this design, each model is fitted once to the training data and then asked to forecast the entire test horizon. This is a common benchmark and keeps the analysis consistent with the presentation workflow. However, for long test windows, simple models such as Naive and ETS often produce visually flat forecast paths because they are optimized for point prediction rather than dynamic tracking over hundreds of periods.
+
+The second is an **updating one-step-ahead evaluation**. Under this design, each model produces a forecast for the next test observation only. Once that observation is realized, it is appended to the available history and the next one-step forecast is generated. This design is more informative for visual path comparison and is especially appropriate for volatility, because it reflects how a forecaster would update beliefs over time as new information arrives.
+
+For the GARCH model, the implementation required special care. GARCH is fitted to the return series rather than to the rolling volatility proxy directly. In the single-origin benchmark, the conditional variance forecast is propagated forward analytically. In the updating one-step-ahead evaluation, the conditional variance is updated recursively using the realized lagged return and the previous conditional variance estimate. This change corrects the earlier flat-line implementation and aligns the report with the model behavior described in the presentation.
+
+\[
+\hat{\sigma}_{t+1|t}^{2} = \omega + \alpha \varepsilon_t^2 + \beta \hat{\sigma}_{t|t-1}^{2}
+\]
+
+where \(\omega\), \(\alpha\), and \(\beta\) are the estimated GARCH(1,1) parameters, \(\varepsilon_t\) is the most recent return innovation, and \(\hat{\sigma}_{t|t-1}^{2}\) is the previous conditional variance estimate.
+
+\newpage
+
+# 4 Individual Model Results
+
+This section summarizes each model separately before comparing them collectively. For each model, the figure emphasizes the updating one-step-ahead path, because that representation is the most useful for assessing how the model behaves through time.
+
+## 4.1 Naive Benchmark
+
+The naive model uses the most recent observed volatility value as the forecast for the next period. In notation, the model is simply
+
+\[
+\hat{y}_{t+1|t} = y_t.
+\]
+
+Although extremely simple, this benchmark is important because volatility is persistent. A strong naive forecast therefore indicates that much of the forecasting problem can already be explained by local persistence alone.
+
+In the updating one-step-ahead evaluation, the naive model tracks the general level of volatility reasonably well, but it cannot anticipate regime shifts or large changes in amplitude. Its main strength is stability and interpretability rather than responsiveness.
+
+```{r naive-forecast-plot, fig.cap="Updating one-step-ahead Naive forecast compared with observed volatility."}
+ggplot(naive_plot_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "Naive Forecast vs Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+Under the updating one-step-ahead evaluation, the naive model achieved RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "Naive"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "Naive"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "Naive"])`.
+
+## 4.2 ARIMA Model
+
+The ARIMA model was fitted directly to the rolling volatility proxy using the `auto.arima()` procedure. Automatic model selection chose `r arima_label` on the training set. This specification is consistent with the ACF/PACF evidence, which suggested strong short-lag dependence and an autoregressive component.
+
+Compared with the naive benchmark, ARIMA attempts to capture linear dependence more flexibly through its autoregressive and moving-average structure. In practice, this can improve fit when the underlying dynamics are stable, but it may still struggle when the series contains abrupt changes in volatility level.
+
+```{r arima-forecast-plot, fig.cap="Updating one-step-ahead ARIMA forecast compared with observed volatility."}
+ggplot(arima_plot_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = paste("Rolling", arima_label, "Forecast vs Observed Volatility"),
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+The ARIMA forecast follows the overall level of the series but still smooths through abrupt volatility changes. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "ARIMA"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "ARIMA"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "ARIMA"])`.
+
+### ARIMA Residual Diagnostics
+
+Residual diagnostics are useful for determining whether the ARIMA specification has removed most of the linear dependence in the training series. The residual plot, residual ACF, and residual histogram are shown below.
+
+```{r arima-residual-diagnostics, fig.cap="Residual diagnostics for the training-sample ARIMA model."}
+par(mfrow = c(1, 3))
+plot(arima_resid, type = "l", main = "ARIMA Residuals", ylab = "Residual")
+Acf(na.omit(arima_resid), main = "Residual ACF")
+hist(arima_resid, breaks = 30, main = "Residual Distribution", xlab = "Residual")
+par(mfrow = c(1, 1))
+```
+
+The residual diagnostics suggest that the ARIMA model captures part, but not all, of the dependence in the series. This is unsurprising because volatility data are not only persistent but also conditionally heteroskedastic, and ARIMA does not explicitly model time-varying variance.
+
+## 4.3 ETS Model
+
+The ETS model provides a state-space exponential smoothing benchmark. On the training set, the selected method was `r ets_method`. In this application, ETS acts mainly as a smooth level-based forecasting model rather than as a structural volatility model.
+
+In the earlier draft of the report, the ETS path appeared almost flat over the full test period because a single-origin long-horizon forecast was plotted directly. In the revised report, the ETS model is shown using updating one-step-ahead forecasts, which yields a much more interpretable path and makes the model behavior consistent with the rest of the analysis.
+
+```{r ets-forecast-plot, fig.cap="Updating one-step-ahead ETS forecast compared with observed volatility."}
+ggplot(ets_plot_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "ETS Forecast vs Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+The ETS model is stable and often close to the naive benchmark, but it adapts gradually rather than abruptly. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "ETS"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "ETS"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "ETS"])`.
+
+## 4.4 NNAR Model
+
+The neural network autoregression model, fitted using `nnetar()`, was included to assess whether nonlinear autoregressive structure could improve volatility forecasts. In principle, NNAR can capture nonlinear relationships missed by linear time series models. In practice, however, neural models often require careful tuning and can overfit when the underlying process is dominated by persistence rather than rich nonlinear patterns.
+
+To reduce instability and keep computation manageable, the final report uses a modest NNAR specification and evaluates it under both the single-origin and updating one-step-ahead frameworks. The figure below shows the updating one-step-ahead path.
+
+```{r nnar-forecast-plot, fig.cap="Updating one-step-ahead NNAR forecast compared with observed volatility."}
+ggplot(nn_plot_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "NNAR Forecast vs Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+The NNAR model is the least stable among the retained models. It sometimes tracks direction changes, but its path is generally less reliable and its forecast errors are larger. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "NNAR"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "NNAR"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "NNAR"])`.
+
+## 4.5 GARCH Model
+
+Because volatility clustering is the defining feature of this problem, the GARCH model is central to the analysis. Unlike the other models, which forecast the volatility proxy directly, GARCH is fitted to the return series and models the conditional variance recursively. This makes it especially appropriate for financial data where the variance changes through time.
+
+The revised implementation uses two correct forecast constructions. For the single-origin benchmark, the conditional variance forecast is propagated forward analytically from the end of the training period. For the updating one-step-ahead evaluation, the forecast is updated recursively using the previous realized return and the previous conditional variance estimate. This correction is the most important technical improvement relative to the earlier draft.
+
+```{r garch-forecast-plot, fig.cap="Recursive updating one-step-ahead GARCH(1,1) forecast compared with observed volatility."}
+ggplot(garch_plot_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "Recursive GARCH(1,1) Forecast vs Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+The estimated GARCH parameters are shown below.
+
+```{r garch-coef-table}
+knitr::kable(
+  garch_coef_table,
+  digits = 6,
+  caption = "Estimated GARCH(1,1) coefficients used in the recursive volatility update."
+)
+```
+
+The GARCH model captures the general volatility level more effectively than the other models and is especially well aligned with the financial interpretation of the problem. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "GARCH"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "GARCH"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "GARCH"])`.
+
+\newpage
+
+# 5 Comparative Model Evaluation
+
+The model-specific sections above describe the behavior of each forecast path. This section compares the models side by side using both the single-origin benchmark and the updating one-step-ahead evaluation.
+
+## 5.1 Single-Origin Benchmark Results
+
+The first comparison table retains the single-origin design used in the original presentation workflow. Each model is trained once on the training data and then forecast across the entire test horizon. This table is useful for continuity with the slide deck and for evaluating how models behave when a long-horizon forecast is required from one fixed origin.
+
+```{r direct-results-table}
+knitr::kable(
+  results_direct,
+  digits = 4,
+  caption = "Single-origin benchmark forecast accuracy across competing models."
+)
+```
+
+Under the single-origin benchmark, the best RMSE was obtained by `r best_direct_model`, with an RMSE of `r sprintf("%.4f", min(results_direct$RMSE))`. This benchmark is the most directly comparable to the class presentation, but the full-horizon forecast paths for simple models should be interpreted cautiously because they are not meant to visually track each test observation in real time.
+
+### Benchmark Error Heatmap
+
+```{r direct-error-heatmap, fig.cap="Heatmap of single-origin forecast errors across models and metrics."}
+ggplot(direct_error_long, aes(x = Metric, y = Model, fill = Value)) +
+  geom_tile() +
+  geom_text(aes(label = round(Value, 4)), size = 4) +
+  labs(
+    title = "Single-Origin Forecast Error Heatmap",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+```
+
+### Benchmark Ranking Heatmap
+
+```{r direct-ranking-heatmap, fig.cap="Model ranking under the single-origin benchmark (1 = best)."}
+ggplot(direct_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
+  geom_tile() +
+  geom_text(aes(label = Rank), size = 4) +
+  labs(
+    title = "Model Ranking: Single-Origin Benchmark",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+```
+
+The benchmark ranking heatmap shows whether the relative ordering of the models is stable across RMSE, MAE, and MAPE. A consistent ranking across metrics indicates that the preferred model is not winning only because of one particular error measure.
+
+## 5.2 Updating One-Step-Ahead Results
+
+The second table reports the updating one-step-ahead accuracy measures. This evaluation is the preferred basis for interpreting the plotted forecast paths because the models are updated as new observations become available.
+
+```{r rolling-results-table}
+knitr::kable(
+  results_roll,
+  digits = 4,
+  caption = "Updating one-step-ahead forecast accuracy across competing models."
+)
+```
+
+Under the updating one-step-ahead evaluation, the best RMSE was obtained by `r best_roll_model`, with an RMSE of `r sprintf("%.4f", min(results_roll$RMSE))`. This is the more realistic operational forecasting framework for a volatility-monitoring exercise because it incorporates new information sequentially over time.
+
+### Updating One-Step Ranking Heatmap
+
+```{r rolling-ranking-heatmap, fig.cap="Model ranking under updating one-step-ahead evaluation (1 = best)."}
+ggplot(rolling_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
+  geom_tile() +
+  geom_text(aes(label = Rank), size = 4) +
+  labs(
+    title = "Model Ranking: Updating One-Step-Ahead Evaluation",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+```
+
+### Updating One-Step Error Heatmap
+
+```{r rolling-error-heatmap, fig.cap="Heatmap of updating one-step-ahead forecast errors across models and metrics."}
+ggplot(rolling_error_long, aes(x = Metric, y = Model, fill = Value)) +
+  geom_tile() +
+  geom_text(aes(label = round(Value, 4)), size = 4) +
+  labs(
+    title = "Updating One-Step-Ahead Forecast Error Heatmap",
+    x = "Metric",
+    y = "Model"
+  ) +
+  theme_minimal()
+```
+
+## 5.3 All-Model Dynamic Forecast Comparison
+
+The figure below places all updating one-step-ahead forecasts on the same chart. This view is intentionally dense, but it is useful for seeing the broad differences in responsiveness, smoothness, and overall tracking behavior across all models.
+
+```{r all-models-plot, fig.cap="Updating one-step-ahead forecast paths for all retained models compared with observed volatility."}
+ggplot(all_models_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "All Model Forecasts vs Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+The all-model comparison reinforces several qualitative patterns. The naive and ETS models are stable and persistent. ARIMA is somewhat more flexible than these simple benchmarks but still mostly smooths over abrupt changes. NNAR appears less reliable and more erratic. The GARCH path is the most interpretable from a volatility perspective because it adapts to shocks while preserving mean-reverting variance behavior.
+
+## 5.4 Top-Model Comparison
+
+The following figure focuses on the three models retained as the most interpretable in the final report: GARCH, ETS, and the naive benchmark. This figure is closest to the presentation narrative and highlights the contrast between a variance-based model and two simpler persistence-based alternatives.
+
+```{r top-models-plot, fig.cap="Observed volatility compared with the three retained top-model forecast paths."}
+ggplot(top_models_long, aes(x = date, y = Value, color = Series)) +
+  geom_line() +
+  labs(
+    title = "Top Forecasts Compared with Observed Volatility",
+    x = "Date",
+    y = "Volatility"
+  ) +
+  theme_minimal()
+```
+
+Among these models, GARCH is the most theoretically appropriate because it explicitly models conditional heteroskedasticity. ETS and Naive remain useful benchmarks because they reveal how much of the volatility series can be explained by persistence alone.
+
+# 6 Discussion
+
+The empirical results answer the project’s research questions in a reasonably clear way. First, short-term SPY volatility is forecastable to some extent. The volatility proxy exhibits strong persistence, clustered high-variance episodes, and a pronounced dependence structure, all of which give forecasting models exploitable signal. Second, more advanced models do not automatically outperform simple baselines. In both the benchmark and updating one-step-ahead evaluations, the simple models remain competitive because the volatility series is highly persistent.
+
+Third, the best model depends somewhat on the evaluation design, but the overall interpretation is stable. The GARCH model is the most appropriate volatility model conceptually and performs especially well when the recursive conditional variance is implemented correctly. This is consistent with the class presentation, which emphasized that GARCH captures volatility clustering and persistence more naturally than the other models. The revised code used here makes that conclusion more credible because the forecast path is now genuinely dynamic rather than flat.
+
+The comparison also illustrates why plotting choices matter. A direct multi-step forecast from a simple level model over a long test window can create the misleading impression that the model is “wrong” simply because the plotted line looks nearly constant. In reality, that path is a valid long-horizon conditional expectation from one origin. For tracking the evolution of volatility through time, however, the updating one-step-ahead evaluation is more informative. This is why the final report now separates benchmark accuracy from dynamic path behavior.
+
+The NNAR results are also informative even though the model is not among the strongest performers. The neural network benchmark was included because nonlinear structure is plausible in financial volatility data. However, the results suggest that in this application the volatility process is dominated by persistence and conditional variance dynamics rather than by nonlinear patterns that can be easily exploited by a relatively small autoregressive neural network. This is consistent with the presentation conclusion that NNAR tended to overfit and generalize poorly.
+
+# 7 Limitations and Future Work
+
+Several limitations should be acknowledged. First, the target series is a rolling volatility proxy rather than a direct realized volatility measure. This makes the problem interpretable and computationally convenient, but it is still a constructed series rather than latent volatility itself. Second, the analysis focuses on a single market proxy, SPY, and therefore does not capture cross-asset variation. Third, no external predictors were included, even though variables such as VIX, interest rates, or macroeconomic announcements could plausibly improve short-term risk forecasts.
+
+A fourth limitation concerns the evaluation design itself. Although the updating one-step-ahead framework is more realistic than a purely static holdout plot, the models were not re-selected from scratch in a full rolling-window or rolling-origin backtesting exercise. For example, the ARIMA order was selected once and then applied repeatedly, and the neural model was intentionally kept modest to avoid excessive computational cost. These are reasonable compromises for a class project, but they are still simplifications relative to a production forecasting system.
+
+Future work could extend the report in several directions. One natural extension is to compare alternative volatility models such as EGARCH, GJR-GARCH, or stochastic volatility models. Another is to introduce exogenous predictors, especially market-implied volatility measures, macroeconomic variables, or sector-specific information. A third direction is to evaluate rolling one-step-ahead forecasts with repeated full model re-estimation, which would provide an even stronger robustness check. Finally, the analysis could be repeated across multiple assets to determine whether the same model ranking holds outside a broad-market ETF.
+
+# 8 Summary and Conclusions
+
+This project examined whether short-term stock market volatility can be forecasted using standard time series methods, using SPY daily returns and a 21-day rolling volatility proxy. The data showed strong persistence, volatility clustering, and substantial changes in risk over time. These features motivated a comparison among Naive, ARIMA, ETS, NNAR, and GARCH approaches.
+
+The final results show that volatility is forecastable, but the models differ in both interpretability and performance. Simple persistence-based benchmarks remain competitive, which indicates that much of the information in the series lies in its own recent history. At the same time, the GARCH framework remains especially compelling because it is built to model conditional variance directly and therefore aligns most naturally with the underlying financial problem.
+
+The most important improvement made during report revision was methodological rather than purely rhetorical. Specifically, the earlier flat-line implementation of GARCH was replaced by a correct recursive conditional variance update, and the misleading long-horizon visual paths for simple models were replaced with updating one-step-ahead diagnostics. These changes make the final report more faithful to the project’s actual goals, more consistent with the presentation, and more persuasive as a scientific analysis.
+
+# 9 AI Use Statement
+
+AI tools were used to improve the organization of the report, refine written English, suggest revisions to the R Markdown structure, and help diagnose earlier model-implementation issues. All analyses, code execution, model checking, and final interpretation were reviewed and validated by the authors.
