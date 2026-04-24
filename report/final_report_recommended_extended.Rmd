@@ -6,7 +6,6 @@ fontsize: 11pt
 output:
   pdf_document:
     toc: true
-    number_sections: true
     fig_caption: true
 geometry: margin=2.54cm
 ---
@@ -743,7 +742,7 @@ knitr::kable(
 )
 ```
 
-The GARCH model captures the general volatility level more effectively than the other models and is especially well aligned with the financial interpretation of the problem. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "GARCH"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "GARCH"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "GARCH"])`.
+The GARCH model is theoretically well matched to the financial interpretation of volatility because it models conditional variance directly. However, its forecast path is more reactive than the smoother 21-day rolling volatility proxy used as the evaluation target. As a result, GARCH is useful for interpreting volatility clustering, but it does not provide the best empirical accuracy in the updating one-step-ahead comparison. Its updating one-step-ahead accuracy was RMSE = `r sprintf("%.4f", results_roll$RMSE[results_roll$Model == "GARCH"])`, MAE = `r sprintf("%.4f", results_roll$MAE[results_roll$Model == "GARCH"])`, and MAPE = `r sprintf("%.2f", results_roll$MAPE[results_roll$Model == "GARCH"])`.
 
 \newpage
 
@@ -807,7 +806,7 @@ knitr::kable(
 )
 ```
 
-Under the updating one-step-ahead evaluation, the best RMSE was obtained by `r best_roll_model`, with an RMSE of `r sprintf("%.4f", min(results_roll$RMSE))`. This is the more realistic operational forecasting framework for a volatility-monitoring exercise because it incorporates new information sequentially over time.
+Under the updating one-step-ahead evaluation, the lowest RMSE was obtained by `r best_roll_model`, with an RMSE of `r sprintf("%.4f", min(results_roll$RMSE))`. However, the ranking is metric-dependent: ARIMA performs best by RMSE, while the Naive benchmark performs best by MAE and MAPE. This result suggests that the volatility series is highly persistent, so simple persistence-based forecasts remain difficult to beat even when more flexible models are included. This updating framework is the preferred operational comparison because it incorporates new information sequentially over time.
 
 ### Updating One-Step Ranking Heatmap
 
@@ -854,9 +853,9 @@ ggplot(all_models_long, aes(x = date, y = Value, color = Series)) +
 
 The all-model comparison reinforces several qualitative patterns. The naive and ETS models are stable and persistent. ARIMA is somewhat more flexible than these simple benchmarks but still mostly smooths over abrupt changes. NNAR appears less reliable and more erratic. The GARCH path is the most interpretable from a volatility perspective because it adapts to shocks while preserving mean-reverting variance behavior.
 
-## 5.4 Top-Model Comparison
+## 5.4 Conceptual and Benchmark Model Comparison
 
-The following figure focuses on the three models retained as the most interpretable in the final report: GARCH, ETS, and the naive benchmark. This figure is closest to the presentation narrative and highlights the contrast between a variance-based model and two simpler persistence-based alternatives.
+The following figure focuses on three interpretable benchmark models: GARCH, ETS, and the Naive benchmark. This comparison highlights the contrast between a variance-based financial model and two simpler persistence-based alternatives. These are not necessarily the top three models by every accuracy metric; rather, they are useful for interpreting the tradeoff between theoretical motivation and empirical forecast accuracy.
 
 ```{r top-models-plot, fig.cap="Observed volatility compared with the three retained top-model forecast paths."}
 ggplot(top_models_long, aes(x = date, y = Value, color = Series)) +
@@ -869,13 +868,13 @@ ggplot(top_models_long, aes(x = date, y = Value, color = Series)) +
   theme_minimal()
 ```
 
-Among these models, GARCH is the most theoretically appropriate because it explicitly models conditional heteroskedasticity. ETS and Naive remain useful benchmarks because they reveal how much of the volatility series can be explained by persistence alone.
+Among these models, GARCH is the most theoretically motivated because it explicitly models conditional heteroskedasticity. However, the Naive and ETS forecasts are more competitive empirically because the 21-day rolling volatility target is highly persistent and relatively smooth. This comparison therefore shows that theoretical suitability does not automatically guarantee the lowest forecast error for a constructed rolling-volatility proxy.
 
 # 6 Discussion
 
 The empirical results answer the project’s research questions in a reasonably clear way. First, short-term SPY volatility is forecastable to some extent. The volatility proxy exhibits strong persistence, clustered high-variance episodes, and a pronounced dependence structure, all of which give forecasting models exploitable signal. Second, more advanced models do not automatically outperform simple baselines. In both the benchmark and updating one-step-ahead evaluations, the simple models remain competitive because the volatility series is highly persistent.
 
-Third, the best model depends somewhat on the evaluation design, but the overall interpretation is stable. The GARCH model is the most appropriate volatility model conceptually and performs especially well when the recursive conditional variance is implemented correctly. This is consistent with the class presentation, which emphasized that GARCH captures volatility clustering and persistence more naturally than the other models. The revised code used here makes that conclusion more credible because the forecast path is now genuinely dynamic rather than flat.
+Third, the best model depends somewhat on the evaluation design, but the overall interpretation is stable. The GARCH model is the most appropriate model conceptually because it directly represents conditional heteroskedasticity in returns. Empirically, however, it does not dominate the updating one-step-ahead accuracy table. ARIMA has the lowest RMSE, while the Naive benchmark has the strongest MAE and MAPE. This difference suggests that the evaluation target matters: the 21-day rolling volatility proxy is smoother than the one-period conditional volatility estimated by GARCH, so persistence-based models can perform very well even without explicitly modeling return variance.
 
 The comparison also illustrates why plotting choices matter. A direct multi-step forecast from a simple level model over a long test window can create the misleading impression that the model is “wrong” simply because the plotted line looks nearly constant. In reality, that path is a valid long-horizon conditional expectation from one origin. For tracking the evolution of volatility through time, however, the updating one-step-ahead evaluation is more informative. This is why the final report now separates benchmark accuracy from dynamic path behavior.
 
@@ -895,7 +894,7 @@ This project examined whether short-term stock market volatility can be forecast
 
 The final results show that volatility is forecastable, but the models differ in both interpretability and performance. Simple persistence-based benchmarks remain competitive, which indicates that much of the information in the series lies in its own recent history. At the same time, the GARCH framework remains especially compelling because it is built to model conditional variance directly and therefore aligns most naturally with the underlying financial problem.
 
-The most important improvement made during report revision was methodological rather than purely rhetorical. Specifically, the earlier flat-line implementation of GARCH was replaced by a correct recursive conditional variance update, and the misleading long-horizon visual paths for simple models were replaced with updating one-step-ahead diagnostics. These changes make the final report more faithful to the project’s actual goals, more consistent with the presentation, and more persuasive as a scientific analysis.
+A central methodological feature of the final analysis is the distinction between single-origin forecasts and updating one-step-ahead forecasts. The single-origin benchmark evaluates long-horizon performance from one fixed training endpoint, while the updating framework better represents an operational monitoring setting in which new observations become available sequentially. This distinction clarifies why simple persistence-based models can look visually flat in long-horizon forecasts but remain competitive in one-step-ahead accuracy.
 
 # 9 AI Use Statement
 
