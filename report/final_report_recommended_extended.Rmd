@@ -3,6 +3,9 @@ title: "Forecasting Stock Market Volatility Using Daily S&P 500 ETF Returns"
 author: "He Jiang and Patrick Zhu"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 fontsize: 11pt
+header-includes:
+  - \usepackage{float}
+  - \usepackage{placeins}
 output:
   pdf_document:
     toc: true
@@ -76,9 +79,9 @@ summary_table <- data.frame(
   Variable = c("date", "adj_close", "return", "volatility_21"),
   Description = c(
     "Trading date",
-    "Adjusted closing price of SPY",
+    "SPY adjusted close",
     "Daily log return",
-    "21-day rolling standard deviation of returns"
+    "21-day rolling return volatility"
   ),
   Unit = c("Date", "USD", "Log return", "Standard deviation"),
   Mean = c(NA, mean(data$adj_close), mean(data$return), mean(data$volatility_21)),
@@ -478,7 +481,8 @@ The cleaned dataset contains four variables used throughout the report: date, ad
 knitr::kable(
   summary_table,
   digits = 4,
-  caption = "Summary of variables used in the analysis."
+  caption = "Summary of variables used in the analysis.",
+  booktabs = TRUE
 )
 ```
 
@@ -599,7 +603,7 @@ The ADF test produced a p-value of `r sprintf("%.4f", prelim_tests$P_Value[1])`,
 
 ## 3.4 Two Evaluation Schemes
 
-A key lesson from revising the original report is that model evaluation depends not only on the selected model but also on the forecasting design. Two schemes are therefore retained in this final version.
+Model evaluation depends not only on the selected model but also on the forecasting design. Two schemes are therefore used in this analysis.
 
 The first is a **single-origin benchmark**. Under this design, each model is fitted once to the training data and then asked to forecast the entire test horizon. This is a common benchmark and keeps the analysis consistent with the presentation workflow. However, for long test windows, simple models such as Naive and ETS often produce visually flat forecast paths because they are optimized for point prediction rather than dynamic tracking over hundreds of periods.
 
@@ -681,7 +685,7 @@ The residual diagnostics suggest that the ARIMA model captures part, but not all
 
 The ETS model provides a state-space exponential smoothing benchmark. On the training set, the selected method was `r ets_method`. In this application, ETS acts mainly as a smooth level-based forecasting model rather than as a structural volatility model.
 
-In the earlier draft of the report, the ETS path appeared almost flat over the full test period because a single-origin long-horizon forecast was plotted directly. In the revised report, the ETS model is shown using updating one-step-ahead forecasts, which yields a much more interpretable path and makes the model behavior consistent with the rest of the analysis.
+When ETS is used for a long single-origin forecast, the forecast path can appear nearly flat over the test period because the model is producing a conditional expectation from one fixed origin. For this reason, the ETS model is also evaluated using updating one-step-ahead forecasts, which provide a more interpretable view of how the model tracks the volatility series over time.
 
 ```{r ets-forecast-plot, fig.cap="Updating one-step-ahead ETS forecast compared with observed volatility."}
 ggplot(ets_plot_long, aes(x = date, y = Value, color = Series)) +
@@ -719,7 +723,7 @@ The NNAR model is the least stable among the retained models. It sometimes track
 
 Because volatility clustering is the defining feature of this problem, the GARCH model is central to the analysis. Unlike the other models, which forecast the volatility proxy directly, GARCH is fitted to the return series and models the conditional variance recursively. This makes it especially appropriate for financial data where the variance changes through time.
 
-The revised implementation uses two correct forecast constructions. For the single-origin benchmark, the conditional variance forecast is propagated forward analytically from the end of the training period. For the updating one-step-ahead evaluation, the forecast is updated recursively using the previous realized return and the previous conditional variance estimate. This correction is the most important technical improvement relative to the earlier draft.
+The implementation uses two forecast constructions. For the single-origin benchmark, the conditional variance forecast is propagated forward analytically from the end of the training period. For the updating one-step-ahead evaluation, the forecast is updated recursively using the previous realized return and the previous conditional variance estimate. This approach aligns the GARCH forecast with the sequential forecasting setting used in the dynamic comparison.
 
 ```{r garch-forecast-plot, fig.cap="Recursive updating one-step-ahead GARCH(1,1) forecast compared with observed volatility."}
 ggplot(garch_plot_long, aes(x = date, y = Value, color = Series)) +
@@ -766,7 +770,7 @@ Under the single-origin benchmark, the best RMSE was obtained by `r best_direct_
 
 ### Benchmark Error Heatmap
 
-```{r direct-error-heatmap, fig.cap="Heatmap of single-origin forecast errors across models and metrics."}
+```{r direct-error-heatmap, fig.cap="Heatmap of single-origin forecast errors across models and metrics.", fig.pos='H'}
 ggplot(direct_error_long, aes(x = Metric, y = Model, fill = Value)) +
   geom_tile() +
   geom_text(aes(label = round(Value, 4)), size = 4) +
@@ -780,7 +784,7 @@ ggplot(direct_error_long, aes(x = Metric, y = Model, fill = Value)) +
 
 ### Benchmark Ranking Heatmap
 
-```{r direct-ranking-heatmap, fig.cap="Model ranking under the single-origin benchmark (1 = best)."}
+```{r direct-ranking-heatmap, fig.cap="Model ranking under the single-origin benchmark (1 = best).", fig.pos='H'}
 ggplot(direct_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
   geom_tile() +
   geom_text(aes(label = Rank), size = 4) +
@@ -793,6 +797,8 @@ ggplot(direct_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
 ```
 
 The benchmark ranking heatmap shows whether the relative ordering of the models is stable across RMSE, MAE, and MAPE. A consistent ranking across metrics indicates that the preferred model is not winning only because of one particular error measure.
+
+\FloatBarrier
 
 ## 5.2 Updating One-Step-Ahead Results
 
@@ -810,7 +816,7 @@ Under the updating one-step-ahead evaluation, the lowest RMSE was obtained by `r
 
 ### Updating One-Step Ranking Heatmap
 
-```{r rolling-ranking-heatmap, fig.cap="Model ranking under updating one-step-ahead evaluation (1 = best)."}
+```{r rolling-ranking-heatmap, fig.cap="Model ranking under updating one-step-ahead evaluation (1 = best).",fig.pos='H'}
 ggplot(rolling_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
   geom_tile() +
   geom_text(aes(label = Rank), size = 4) +
@@ -824,7 +830,7 @@ ggplot(rolling_rank_long, aes(x = Metric, y = Model, fill = Rank)) +
 
 ### Updating One-Step Error Heatmap
 
-```{r rolling-error-heatmap, fig.cap="Heatmap of updating one-step-ahead forecast errors across models and metrics."}
+```{r rolling-error-heatmap, fig.cap="Heatmap of updating one-step-ahead forecast errors across models and metrics.",fig.pos='H'}
 ggplot(rolling_error_long, aes(x = Metric, y = Model, fill = Value)) +
   geom_tile() +
   geom_text(aes(label = round(Value, 4)), size = 4) +
@@ -835,12 +841,13 @@ ggplot(rolling_error_long, aes(x = Metric, y = Model, fill = Value)) +
   ) +
   theme_minimal()
 ```
+\FloatBarrier
 
 ## 5.3 All-Model Dynamic Forecast Comparison
 
 The figure below places all updating one-step-ahead forecasts on the same chart. This view is intentionally dense, but it is useful for seeing the broad differences in responsiveness, smoothness, and overall tracking behavior across all models.
 
-```{r all-models-plot, fig.cap="Updating one-step-ahead forecast paths for all retained models compared with observed volatility."}
+```{r all-models-plot, fig.cap="Updating one-step-ahead forecast paths for all retained models compared with observed volatility.",fig.pos='H'}
 ggplot(all_models_long, aes(x = date, y = Value, color = Series)) +
   geom_line() +
   labs(
@@ -851,17 +858,21 @@ ggplot(all_models_long, aes(x = date, y = Value, color = Series)) +
   theme_minimal()
 ```
 
+\FloatBarrier
+
 The all-model comparison reinforces several qualitative patterns. The naive and ETS models are stable and persistent. ARIMA is somewhat more flexible than these simple benchmarks but still mostly smooths over abrupt changes. NNAR appears less reliable and more erratic. The GARCH path is the most interpretable from a volatility perspective because it adapts to shocks while preserving mean-reverting variance behavior.
+
+
 
 ## 5.4 Conceptual and Benchmark Model Comparison
 
 The following figure focuses on three interpretable benchmark models: GARCH, ETS, and the Naive benchmark. This comparison highlights the contrast between a variance-based financial model and two simpler persistence-based alternatives. These are not necessarily the top three models by every accuracy metric; rather, they are useful for interpreting the tradeoff between theoretical motivation and empirical forecast accuracy.
 
-```{r top-models-plot, fig.cap="Observed volatility compared with the three retained top-model forecast paths."}
+```{r top-models-plot, fig.cap="Observed volatility compared with selected conceptual and benchmark forecast paths.",fig.pos='H'}
 ggplot(top_models_long, aes(x = date, y = Value, color = Series)) +
   geom_line() +
   labs(
-    title = "Top Forecasts Compared with Observed Volatility",
+    title = "Conceptual Benchmark Forecasts vs Observed Volatility",
     x = "Date",
     y = "Volatility"
   ) +
