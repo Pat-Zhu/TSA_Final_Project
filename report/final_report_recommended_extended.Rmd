@@ -812,7 +812,8 @@ knitr::kable(
 )
 ```
 
-Under the updating one-step-ahead evaluation, the lowest RMSE was obtained by `r best_roll_model`, with an RMSE of `r sprintf("%.4f", min(results_roll$RMSE))`. However, the ranking is metric-dependent: ARIMA performs best by RMSE, while the Naive benchmark performs best by MAE and MAPE. This result suggests that the volatility series is highly persistent, so simple persistence-based forecasts remain difficult to beat even when more flexible models are included. This updating framework is the preferred operational comparison because it incorporates new information sequentially over time.
+Under the updating one-step-ahead evaluation, the lowest RMSE was obtained by `r best_roll_model`, with an RMSE of `r sprintf("%.4f", min(results_roll$RMSE))`. In quantitative terms, ARIMA reduces RMSE by approximately 11% relative to the Naive benchmark (0.0008 vs 0.0009), indicating a modest but consistent improvement in capturing short-term volatility dynamics. However, the ranking is metric-dependent: ARIMA performs best by RMSE, while the Naive benchmark performs best by MAE and MAPE. This result suggests that the volatility series is highly persistent, so simple persistence-based forecasts remain difficult to beat even when more flexible models are included. This updating framework is the preferred operational comparison because it incorporates new information sequentially over time.
+
 
 ### Updating One-Step Ranking Heatmap
 
@@ -903,7 +904,7 @@ Future work could extend the report in several directions. One natural extension
 
 This project examined whether short-term stock market volatility can be forecasted using standard time series methods, using SPY daily returns and a 21-day rolling volatility proxy. The data showed strong persistence, volatility clustering, and substantial changes in risk over time. These features motivated a comparison among Naive, ARIMA, ETS, NNAR, and GARCH approaches.
 
-The final results show that volatility is forecastable, but the models differ in both interpretability and performance. Simple persistence-based benchmarks remain competitive, which indicates that much of the information in the series lies in its own recent history. At the same time, the GARCH framework remains especially compelling because it is built to model conditional variance directly and therefore aligns most naturally with the underlying financial problem.
+The final results show that volatility is forecastable, but the models differ in both interpretability and performance. Simple persistence-based benchmarks remain competitive, which indicates that much of the information in the series lies in its own recent history. This pattern arises because the volatility proxy is a smoothed, highly persistent series, meaning that most predictive signal is contained in recent observations. As a result, flexible models such as NNAR or GARCH do not gain a substantial advantage unless they capture additional structure beyond persistence. At the same time, the GARCH framework remains especially compelling because it is built to model conditional variance directly and therefore aligns most naturally with the underlying financial problem.
 
 A central methodological feature of the final analysis is the distinction between single-origin forecasts and updating one-step-ahead forecasts. The single-origin benchmark evaluates long-horizon performance from one fixed training endpoint, while the updating framework better represents an operational monitoring setting in which new observations become available sequentially. This distinction clarifies why simple persistence-based models can look visually flat in long-horizon forecasts but remain competitive in one-step-ahead accuracy.
 
